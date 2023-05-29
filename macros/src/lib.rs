@@ -1,9 +1,14 @@
 use std::path::Path;
 
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use serde::Serialize;
-use syn::{parse_macro_input, ItemImpl};
+use syn::{
+    parse_macro_input,
+    punctuated::Punctuated,
+    token::{Async, Gt, Lt},
+    AngleBracketedGenericArguments, PathSegment, ReturnType, Signature, Token, TraitItem, TypePath,
+};
 
 #[derive(Debug, Serialize)]
 struct MethodMeta {
@@ -22,28 +27,26 @@ pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
         _ => unimplemented!(),
     };
 
-    let c = module.clone();
-
     let module_ident = module.ident;
     let content = module.content.unwrap().1;
 
-    let impl_block = content
+    let trait_block = content
         .iter()
-        .find(|c| matches!(c, syn::Item::Impl(_)))
-        .map(|i| match i {
-            syn::Item::Impl(i) => i,
-            _ => todo!(),
+        .find_map(|i| match i {
+            syn::Item::Trait(t) => Some(t),
+            _ => None,
         })
         .unwrap()
         .to_owned();
 
-    let ItemImpl { items, .. } = impl_block;
+    let trait_ident = trait_block.ident;
 
-    let signatures = items
+    let signatures = trait_block
+        .items
         .into_iter()
         .map(|item| match item {
-            syn::ImplItem::Method(method) => method.sig,
-            _ => todo!(),
+            TraitItem::Method(method) => method.sig,
+            _ => unimplemented!(),
         })
         .collect::<Vec<_>>();
 
@@ -53,23 +56,26 @@ pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
         std::fs::create_dir_all(metadata_folder).unwrap();
     };
 
-    let method_metadata = signatures.into_iter().map(|method_signature| {
-        let args = method_signature.output;
-        let output_str = match args {
-            syn::ReturnType::Default => String::from("null"),
-            syn::ReturnType::Type(_, ty) => match *ty {
-                syn::Type::Path(p_type) => p_type.path.get_ident().unwrap().to_string(),
-                _ => todo!(),
-            },
-        };
+    let method_metadata = signatures
+        .iter()
+        .map(|method_signature| {
+            let args = method_signature.output.to_owned();
+            let output_str = match args {
+                syn::ReturnType::Default => String::from("null"),
+                syn::ReturnType::Type(_, ty) => match *ty {
+                    syn::Type::Path(p_type) => p_type.path.get_ident().unwrap().to_string(),
+                    _ => todo!(),
+                },
+            };
 
-        MethodMeta {
-            name: method_signature.ident.to_string(),
-            output: output_str,
-        }
-    });
+            MethodMeta {
+                name: method_signature.ident.to_string(),
+                output: output_str,
+            }
+        })
+        .collect::<Vec<_>>();
 
-    for method in method_metadata {
+    for method in method_metadata.iter() {
         let folder = &metadata_folder.join(&module_ident.to_string().to_ascii_lowercase());
 
         if !folder.exists() {
@@ -80,6 +86,71 @@ pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
         std::fs::write(meta_path, serde_json::to_string_pretty(&method).unwrap()).unwrap();
     }
 
-    let expanded = quote!(#c);
+    let async_signatures = signatures
+        .into_iter()
+        .map(|t| {
+            let new_output = match t.output.clone() {
+                ReturnType::Default => ReturnType::Default,
+                ReturnType::Type(r_arrow, ty) => match *ty {
+                    syn::Type::Path(path) => {
+                        // let path_str = format!(
+                        //     "Pin<Box<dyn Future<Output = {}>>>",
+                        //     path.path.get_ident().map(|i| i.to_string()).unwrap()
+                        // );
+
+                        let mut path_segments: Punctuated<PathSegment, Token![::]> =
+                            Punctuated::new();
+
+                        let mut box_generics = Punctuated::new();
+                        box_generics.push(syn::GenericArgument::Type(syn::Type::Path(TypePath {
+                            qself: None,
+                            path: path.path,
+                        })));
+
+                        path_segments.push(PathSegment {
+                            ident: proc_macro2::Ident::new("Box", proc_macro2::Span::call_site()),
+                            arguments: syn::PathArguments::AngleBracketed(
+                                AngleBracketedGenericArguments {
+                                    colon2_token: None,
+                                    lt_token: Lt::default(),
+                                    args: box_generics,
+                                    gt_token: Gt::default(),
+                                },
+                            ),
+                        });
+
+                        let new_path = syn::Path {
+                            leading_colon: None,
+                            segments: path_segments,
+                        };
+
+                        ReturnType::Type(
+                            r_arrow,
+                            Box::new(syn::Type::Path(TypePath {
+                                qself: None,
+                                path: new_path,
+                            })),
+                        )
+                    }
+                    _ => todo!(),
+                },
+            };
+
+            Signature {
+                asyncness: None,
+                ..t
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let foo = async_signatures[0].clone();
+
+    let expanded = quote! {
+        pub trait #trait_ident {
+            //fn print_message(&self, message: Message) -> Message;
+            #foo
+        }
+    };
+
     expanded.into()
 }
