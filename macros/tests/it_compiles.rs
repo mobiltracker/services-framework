@@ -1,22 +1,23 @@
 #![allow(unused_must_use, dead_code)]
-
-use std::{future::Future, pin::Pin};
+#![feature(async_fn_in_trait)]
 
 use macros::service;
-pub struct Message {
-    inner: String,
-}
 
 #[service]
-pub mod foobar {
+mod foobar {
+
+    pub struct Message {
+        inner: String,
+    }
+
     trait Foobar {
+        #[get]
         async fn print_message(&self, message: Message) -> Message;
-        async fn foobar_message(&self, message: Message) -> String;
     }
 }
 
 // pub trait Foobar {
-//     fn print_message(&self, message: Message) -> Box<Message>;
+//     fn print_message(&self) -> Pin<Box<dyn Future<Output = String>>>;
 // }
 
 // pub trait FoobarServer {

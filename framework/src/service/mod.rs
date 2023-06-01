@@ -19,11 +19,3 @@ impl ServiceDefinition for HelloService {
         &[]
     }
 }
-
-impl HelloService {
-    pub async fn hello(&self) -> &str {
-        "hello"
-    }
-}
-
-struct HelloClient {}
