@@ -1,17 +1,9 @@
 #![feature(async_fn_in_trait)]
 
-use std::path::Path;
-
 use proc_macro::TokenStream;
 use quote::quote;
 use serde::Serialize;
-use syn::{
-    parse_macro_input,
-    punctuated::Punctuated,
-    token::{Gt, Lt},
-    AngleBracketedGenericArguments, ItemEnum, ItemStruct, ItemTrait, PathSegment, ReturnType,
-    Signature, Token, TraitItem, TraitItemMethod, TypePath,
-};
+use syn::{parse_macro_input, ItemEnum, ItemStruct, ItemTrait, TraitItem, TraitItemMethod};
 
 #[derive(Debug, Serialize)]
 struct MethodMeta {
@@ -19,9 +11,28 @@ struct MethodMeta {
     output: String,
 }
 
+enum HttpMethod {
+    Get,
+    Post,
+    Delete,
+    Put,
+}
+
+impl HttpMethod {
+    pub fn parse_str(val: &str) -> HttpMethod {
+        match val {
+            "get" => Self::Get,
+            "post" => Self::Post,
+            "put" => Self::Put,
+            "delete" => Self::Delete,
+            _ => unimplemented!(),
+        }
+    }
+}
+
 struct ParsedModule {
     structs: Vec<ItemStruct>,
-    enums: Vec<ItemEnum>,
+    _enums: Vec<ItemEnum>,
     traits: Vec<ItemTrait>,
 }
 
@@ -72,7 +83,7 @@ fn extract_module_items(module: syn::ItemMod) -> ParsedModule {
     }
 
     ParsedModule {
-        enums,
+        _enums: enums,
         structs,
         traits,
     }
@@ -84,10 +95,22 @@ fn extract_function_metadata(t: ItemTrait) -> ItemTrait {
 
     for item in items {
         match item {
-            TraitItem::Method(method) => methods.push(TraitItemMethod {
-                attrs: vec![],
-                ..method
-            }),
+            TraitItem::Method(method) => {
+                let mut attrs = method
+                    .attrs
+                    .into_iter()
+                    .map(|attr| attr.path.get_ident().map(|i| i.to_string()).unwrap());
+
+                let _first_attr = attrs
+                    .next()
+                    .map(|a| HttpMethod::parse_str(&a))
+                    .unwrap_or_else(|| HttpMethod::Get);
+
+                methods.push(TraitItemMethod {
+                    attrs: vec![],
+                    ..method
+                })
+            }
             _ => unimplemented!(),
         }
     }
