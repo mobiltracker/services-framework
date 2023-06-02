@@ -2,13 +2,11 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use serde::Serialize;
 use syn::{parse_macro_input, ItemEnum, ItemStruct, ItemTrait, TraitItem, TraitItemMethod};
 
-#[derive(Debug, Serialize)]
 struct MethodMeta {
-    name: String,
-    output: String,
+    path: String,
+    method: HttpMethod,
 }
 
 enum HttpMethod {
@@ -44,23 +42,27 @@ pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let module = match parsed_input {
         syn::Item::Mod(module) => module,
-        _ => unimplemented!(),
+        _ => panic!("This must be a mod"),
     };
 
     let extracted_modules = extract_module_items(module);
 
     let structs = extracted_modules.structs;
 
-    let traits = extracted_modules
+    if extracted_modules.traits.len() > 1 {
+        panic!("faz isso n")
+    }
+
+    let (traits, methods) = extracted_modules
         .traits
-        .into_iter()
-        .map(extract_function_metadata)
-        .collect::<Vec<_>>();
+        .first()
+        .map(|t| extract_function_metadata(t.to_owned()))
+        .unwrap();
 
     let expanded = quote! {
-       #(#structs)*
+        #(#structs)*
 
-       #(#traits)*
+        #traits
     };
 
     expanded.into()
@@ -89,10 +91,11 @@ fn extract_module_items(module: syn::ItemMod) -> ParsedModule {
     }
 }
 
-fn extract_function_metadata(t: ItemTrait) -> ItemTrait {
+fn extract_function_metadata(t: ItemTrait) -> (ItemTrait, Vec<MethodMeta>) {
     let items = t.items.clone();
     let mut methods = vec![];
 
+    let mut router_meta = vec![];
     for item in items {
         match item {
             TraitItem::Method(method) => {
@@ -106,6 +109,13 @@ fn extract_function_metadata(t: ItemTrait) -> ItemTrait {
                     .map(|a| HttpMethod::parse_str(&a))
                     .unwrap_or_else(|| HttpMethod::Get);
 
+                let method_name = method.sig.ident.to_string();
+
+                router_meta.push(MethodMeta {
+                    method: _first_attr,
+                    path: method_name,
+                });
+
                 methods.push(TraitItemMethod {
                     attrs: vec![],
                     ..method
@@ -116,7 +126,8 @@ fn extract_function_metadata(t: ItemTrait) -> ItemTrait {
     }
 
     let items = methods.into_iter().map(TraitItem::Method).collect();
-    ItemTrait { items, ..t }
+    let item_trait = ItemTrait { items, ..t };
+    (item_trait, router_meta)
 }
 
 // let content = module.content.unwrap().1;
